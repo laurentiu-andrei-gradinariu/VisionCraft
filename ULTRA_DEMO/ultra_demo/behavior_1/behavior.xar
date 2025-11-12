@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<ChoregrapheProject xmlns="http://www.ald.softbankrobotics.com/schema/choregraphe/project.xsd" xar_version="3">
+  <Box name="root" id="-1" localization="8" tooltip="Root box of Choregraphe&apos;s behavior. Highest level possible." x="0" y="0">
+    <bitmap>media/images/box/root.png</bitmap>
+    <script language="4">
+      <content>
+        <![CDATA[]]>
+      </content>
+    </script>
+    <Input name="onLoad" type="1" type_size="1" nature="0" inner="1" tooltip="Signal sent when diagram is loaded." id="1" />
+    <Input name="onStart" type="1" type_size="1" nature="2" inner="0" tooltip="Box behavior starts when a signal is received on this input." id="2" />
+    <Input name="onStop" type="1" type_size="1" nature="3" inner="0" tooltip="Box behavior stops when a signal is received on this input." id="3" />
+    <Output name="onStopped" type="1" type_size="1" nature="1" inner="0" tooltip="Signal sent when box behavior is finished." id="4" />
+    <Timeline enable="0">
+      <BehaviorLayer name="behavior_layer1">
+        <BehaviorKeyframe name="keyframe1" index="1">
+          <Diagram>
+            <Box name="Demo" id="1" localization="8" tooltip="" x="204" y="165">
+              <bitmap>media/images/box/box-python-script.png</bitmap>
+              <script language="4">
+                <content>
+                  <![CDATA[# -*- coding: utf-8 -*-
+from naoqi import ALProxy
+import base64
+import json
+import traceback
+import numpy as np
+import cv2
+import time
+import threading
+import requests
+
+ROBOT_IP = "192.168.43.231"
+SERVER_URL = "http://192.168.43.173:5001/process_image"
+PORT = 9559
+
+def safe_say(tts, message):
+    try:
+        if message and isinstance(message, basestring):
+            tts.post.say(message)
+        else:
+            print("TTS message invalid:", message)
+    except Exception as e:
+        print("TTS failed:", e)
+        traceback.print_exc()
+
+def process_and_speak():
+    tts = None
+    try:
+        tts = ALProxy("ALTextToSpeech", ROBOT_IP, PORT)
+        camProxy = ALProxy("ALVideoDevice", ROBOT_IP, PORT)
+        awareness = ALProxy("ALBasicAwareness", ROBOT_IP, PORT)
+
+        # Oprire BasicAwareness cu delay pentru a nu bloca TTS
+        awareness.stopAwareness()
+        print("[INFO] BasicAwareness stopped.")
+        time.sleep(0.5)
+
+        resolution = 2
+        colorSpace = 11
+        fps = 5
+        nameId = camProxy.subscribeCamera("python_client", 0, resolution, colorSpace, fps)
+
+        try:
+            print("[INFO] Capturing image...")
+            naoImage = camProxy.getImageRemote(nameId)
+        finally:
+            camProxy.unsubscribe(nameId)
+
+        if naoImage is None:
+            print("[ERROR] Failed to capture image.")
+            tts.say("I could not capture an image.")
+            return
+
+        width, height, array = naoImage[0], naoImage[1], naoImage[6]
+        try:
+            img_np = np.frombuffer(bytearray(array), dtype=np.uint8).reshape((height, width, 3))
+        except Exception as e:
+            print("[ERROR] Converting image:", e)
+            traceback.print_exc()
+            tts.say("I could not process the image from the camera.")
+            return
+
+        try:
+            success, img_encoded = cv2.imencode('.jpg', img_np)
+            if not success:
+                print("[ERROR] JPEG encoding failed.")
+                tts.say("I could not encode the image.")
+                return
+
+            # Encode base64 ca UTF-8 pentru JSON
+            image_encoded = base64.b64encode(img_encoded.tobytes()).decode('utf-8')
+            print("[INFO] Image encoded to base64 successfully.")
+        except Exception as e:
+            print("[ERROR] Encoding image:", e)
+            traceback.print_exc()
+            tts.say("I could not encode the image.")
+            return
+
+        try:
+            print("[INFO] Sending image to server:", SERVER_URL)
+            response = requests.post(SERVER_URL, json={'image': image_encoded}, timeout=20)
+            print("[INFO] Server responded with status:", response.status_code)
+            print("[DEBUG] Raw response:", response.text)
+
+            if response.status_code != 200:
+                tts.say("The computer did not respond correctly.")
+                return
+
+            try:
+                result = response.json()
+                print("[INFO] Parsed JSON:", result)
+            except Exception as e:
+                print("[ERROR] JSON decoding error:", e)
+                traceback.print_exc()
+                tts.say("I received an invalid response from the computer.")
+                return
+
+            objects = result.get('objects', [])
+            print("[INFO] Objects received:", objects)
+
+            # Fortam toate obiectele la string UTF-8 pentru TTS sigur
+            objects_unicode = [unicode(str(obj), 'utf-8') for obj in objects if obj is not None]
+            print("[DEBUG] objects_unicode to speak:", objects_unicode)
+
+            if objects_unicode:
+                message = u"I saw: " + u", ".join(objects_unicode)
+            else:
+                message = u"I did not see anything."
+
+            # TTS sigur
+            try:
+                tts_message = message.encode('utf-8')
+                print("[INFO] Speaking:", tts_message)
+                tts.say(tts_message)  # sincron
+            except Exception as e:
+                print("[ERROR] TTS failed:", e)
+                traceback.print_exc()
+
+        except Exception as e:
+            print("[ERROR] Sending image to server:", e)
+            traceback.print_exc()
+            tts.say("I could not send the image to the computer macbook pro m3.")
+
+    except Exception as e:
+        print("[ERROR] Connecting to modules:", e)
+        traceback.print_exc()
+        if tts:
+            tts.say("I could not connect to my modules.")
+
+
+
+def main():
+    thread = threading.Thread(target=process_and_speak)
+    thread.start()
+
+if __name__ == "__main__":
+    main()]]>
+                </content>
+              </script>
+              <Input name="onLoad" type="1" type_size="1" nature="0" inner="1" tooltip="Signal sent when diagram is loaded." id="1" />
+              <Input name="onStart" type="1" type_size="1" nature="2" inner="0" tooltip="Box behavior starts when a signal is received on this input." id="2" />
+              <Input name="onStop" type="1" type_size="1" nature="3" inner="0" tooltip="Box behavior stops when a signal is received on this input." id="3" />
+              <Output name="onStopped" type="1" type_size="1" nature="1" inner="0" tooltip="Signal sent when box behavior is finished." id="4" />
+            </Box>
+            <Link inputowner="1" indexofinput="2" outputowner="0" indexofoutput="2" />
+          </Diagram>
+        </BehaviorKeyframe>
+      </BehaviorLayer>
+    </Timeline>
+  </Box>
+</ChoregrapheProject>
